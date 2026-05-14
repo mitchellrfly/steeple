@@ -23,7 +23,7 @@ const anthropic = new Anthropic({
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { transcripts, churchName, denomination, tone, churchCode } = body;
+    const { transcripts, churchName, denomination, tone, churchCode, doctrinalStatement } = body;
 
     // Validate inputs
     if (!transcripts || transcripts.length === 0) {
@@ -131,6 +131,7 @@ ${transcriptBlock}`;
           denomination: denomination,
           tone: tone,
           voice_profile: voiceProfile,
+          doctrinal_statement: doctrinalStatement || null,
           updated_at: new Date().toISOString(),
         },
         {
