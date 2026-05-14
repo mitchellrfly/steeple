@@ -1,52 +1,19 @@
 /* components/SermonInput.js */
 /*
-  This is the main input form where the pastor:
-  1. Pastes their sermon transcript
-  2. Selects their denomination/theological tradition
-  3. Picks their communication tone
-  4. Enters the sermon title and scripture reference
-  5. Hits "Generate Content"
+  UPDATED: Now supports two input modes:
+  1. Transcript Mode (original) — paste a full sermon transcript
+  2. Outline Mode (new) — enter just a title, scriptures, main points,
+     and key illustrations. Steeple uses the voice profile to generate
+     content as if the pastor had preached a full sermon.
   
-  When submitted, it calls the parent's onGenerate function 
-  with all the form data.
+  The mode toggle only appears if the pastor has a voice profile
+  (passed in via the hasVoiceProfile prop).
 */
 
 "use client";
 
 import { useState } from "react";
 
-// These are the denomination options. This list matters a LOT — 
-// it signals to pastors that you understand their world.
-// We'll use these to shape the AI's theological framing.
-const DENOMINATIONS = [
-  "Non-denominational",
-  "Southern Baptist (SBC)",
-  "United Methodist",
-  "Assemblies of God",
-  "Presbyterian (PCA)",
-  "Presbyterian (PCUSA)",
-  "Lutheran (LCMS)",
-  "Lutheran (ELCA)",
-  "Church of Christ",
-  "Catholic",
-  "Episcopal / Anglican",
-  "Reformed / Calvinist",
-  "Pentecostal / Charismatic",
-  "Church of the Nazarene",
-  "Evangelical Free",
-  "Other",
-];
-
-// Communication tone — how the pastor sounds naturally
-const TONES = [
-  { value: "conversational", label: "Conversational & warm", desc: "Like talking to a friend" },
-  { value: "academic", label: "Thoughtful & scholarly", desc: "Exegetical depth, careful language" },
-  { value: "passionate", label: "Passionate & urgent", desc: "Bold, direct, calls to action" },
-  { value: "pastoral", label: "Gentle & pastoral", desc: "Empathetic, encouraging, nurturing" },
-  { value: "storytelling", label: "Story-driven", desc: "Narrative-heavy, illustrative" },
-];
-
-// What content to generate
 const CONTENT_TYPES = [
   { value: "blog", label: "Blog Post" },
   { value: "social", label: "Social Media Posts" },
@@ -54,53 +21,92 @@ const CONTENT_TYPES = [
   { value: "email", label: "Email Devotional" },
 ];
 
-export default function SermonInput({ onGenerate, isLoading }) {
-  // Form state — each piece of data the pastor provides
-  const [sermonText, setSermonText] = useState("");
+export default function SermonInput({ onGenerate, isLoading, hasVoiceProfile, churchProfile }) {
+  // Input mode: "transcript" or "outline"
+  const [mode, setMode] = useState(hasVoiceProfile ? "outline" : "transcript");
+
+  // Shared fields
   const [sermonTitle, setSermonTitle] = useState("");
   const [scriptureRef, setScriptureRef] = useState("");
-  const [denomination, setDenomination] = useState("Non-denominational");
-  const [tone, setTone] = useState("conversational");
   const [selectedTypes, setSelectedTypes] = useState(["blog", "social", "discussion"]);
 
-  // Toggle a content type on/off
+  // Transcript mode fields
+  const [sermonText, setSermonText] = useState("");
+
+  // Outline mode fields
+  const [mainPoints, setMainPoints] = useState(["", "", ""]);
+  const [keyIllustration, setKeyIllustration] = useState("");
+  const [applicationPoint, setApplicationPoint] = useState("");
+
   const toggleType = (type) => {
     setSelectedTypes((prev) =>
-      prev.includes(type)
-        ? prev.filter((t) => t !== type)  // Remove if already selected
-        : [...prev, type]                  // Add if not selected
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
     );
   };
 
-  // Handle form submission
+  const updatePoint = (index, value) => {
+    const updated = [...mainPoints];
+    updated[index] = value;
+    setMainPoints(updated);
+  };
+
+  const addPoint = () => {
+    if (mainPoints.length < 5) setMainPoints([...mainPoints, ""]);
+  };
+
+  const removePoint = (index) => {
+    if (mainPoints.length > 1) setMainPoints(mainPoints.filter((_, i) => i !== index));
+  };
+
   const handleSubmit = () => {
-    // Basic validation
-    if (!sermonText.trim()) {
-      alert("Please paste your sermon transcript.");
-      return;
+    if (mode === "transcript") {
+      if (!sermonText.trim()) {
+        alert("Please paste your sermon transcript.");
+        return;
+      }
+    } else {
+      if (!sermonTitle.trim()) {
+        alert("Please enter a sermon title.");
+        return;
+      }
+      const filledPoints = mainPoints.filter((p) => p.trim());
+      if (filledPoints.length === 0) {
+        alert("Please enter at least one main point.");
+        return;
+      }
     }
+
     if (selectedTypes.length === 0) {
-      alert("Please select at least one content type to generate.");
+      alert("Please select at least one content type.");
       return;
     }
 
-    // Send all the data up to the parent component
     onGenerate({
-      sermonText,
+      mode,
+      sermonText: mode === "transcript" ? sermonText : null,
       sermonTitle,
       scriptureRef,
-      denomination,
-      tone,
+      mainPoints: mode === "outline" ? mainPoints.filter((p) => p.trim()) : null,
+      keyIllustration: mode === "outline" ? keyIllustration : null,
+      applicationPoint: mode === "outline" ? applicationPoint : null,
+      denomination: churchProfile?.denomination || "Non-denominational",
+      tone: churchProfile?.tone || "conversational",
       contentTypes: selectedTypes,
     });
   };
 
-  /* ---------- Inline styles ---------- */
-  // Using inline styles so everything is in one file.
-  // In production you'd move these to Tailwind classes or a CSS module.
-
-  const sectionStyle = {
-    marginBottom: "28px",
+  /* ---- Styles ---- */
+  const inputStyle = {
+    width: "100%",
+    padding: "10px 14px",
+    borderRadius: "var(--radius)",
+    border: "1px solid var(--color-border)",
+    fontFamily: "var(--font-body)",
+    fontSize: "14px",
+    color: "var(--color-text)",
+    background: "var(--color-surface)",
+    boxSizing: "border-box",
+    transition: "border-color 0.2s, box-shadow 0.2s",
   };
 
   const labelStyle = {
@@ -120,29 +126,6 @@ export default function SermonInput({ onGenerate, isLoading }) {
     marginLeft: "4px",
   };
 
-  const inputStyle = {
-    width: "100%",
-    padding: "10px 14px",
-    borderRadius: "var(--radius)",
-    border: "1px solid var(--color-border)",
-    fontFamily: "var(--font-body)",
-    fontSize: "14px",
-    color: "var(--color-text)",
-    background: "var(--color-surface)",
-    boxSizing: "border-box",
-    transition: "border-color 0.2s, box-shadow 0.2s",
-  };
-
-  const selectStyle = {
-    ...inputStyle,
-    cursor: "pointer",
-    appearance: "none",
-    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%236B6560' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E")`,
-    backgroundRepeat: "no-repeat",
-    backgroundPosition: "right 12px center",
-    paddingRight: "36px",
-  };
-
   return (
     <div
       style={{
@@ -154,54 +137,84 @@ export default function SermonInput({ onGenerate, isLoading }) {
       }}
     >
       {/* Header */}
-      <div style={{ marginBottom: "32px" }}>
+      <div style={{ marginBottom: "24px" }}>
         <h2
           style={{
             fontFamily: "var(--font-display)",
             fontSize: "22px",
             fontWeight: 700,
-            color: "var(--color-text)",
-            margin: 0,
+            margin: "0 0 6px",
           }}
         >
-          Your Sermon
+          {mode === "outline" ? "Your Sermon Outline" : "Your Sermon"}
         </h2>
-        <p
-          style={{
-            fontFamily: "var(--font-body)",
-            fontSize: "14px",
-            color: "var(--color-text-secondary)",
-            marginTop: "6px",
-          }}
-        >
-          Paste your transcript and tell us about your style. We&apos;ll generate
-          content that sounds like you.
+        <p style={{ fontSize: "14px", color: "var(--color-text-secondary)", margin: 0 }}>
+          {mode === "outline"
+            ? "Enter your main points and Steeple will generate content in your trained voice."
+            : "Paste your transcript and we&apos;ll generate content that sounds like you."}
         </p>
       </div>
 
-      {/* Sermon title + Scripture row */}
-      <div style={{ display: "flex", gap: "16px", ...sectionStyle }}>
+      {/* Mode toggle — only shows if they have a voice profile */}
+      {hasVoiceProfile && (
+        <div
+          style={{
+            display: "flex",
+            background: "var(--color-surface-raised)",
+            borderRadius: "8px",
+            padding: "4px",
+            marginBottom: "28px",
+            border: "1px solid var(--color-border)",
+          }}
+        >
+          {[
+            { key: "outline", label: "From Outline" },
+            { key: "transcript", label: "From Transcript" },
+          ].map((m) => (
+            <button
+              key={m.key}
+              onClick={() => setMode(m.key)}
+              style={{
+                flex: 1,
+                padding: "10px",
+                borderRadius: "6px",
+                border: "none",
+                background: mode === m.key ? "var(--color-surface)" : "transparent",
+                boxShadow: mode === m.key ? "var(--shadow-sm)" : "none",
+                color: mode === m.key ? "var(--color-accent)" : "var(--color-text-secondary)",
+                fontFamily: "var(--font-body)",
+                fontSize: "13px",
+                fontWeight: mode === m.key ? 600 : 500,
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Sermon title + Scripture — shared across both modes */}
+      <div style={{ display: "flex", gap: "16px", marginBottom: "24px" }}>
         <div style={{ flex: 2 }}>
           <label style={labelStyle}>
             Sermon Title
-            <span style={sublabelStyle}>(optional)</span>
+            {mode === "transcript" && <span style={sublabelStyle}>(optional)</span>}
           </label>
           <input
             type="text"
-            placeholder='e.g. "Finding Rest in a Restless World"'
+            placeholder={'"Finding Rest in a Restless World"'}
             value={sermonTitle}
             onChange={(e) => setSermonTitle(e.target.value)}
             style={inputStyle}
           />
         </div>
         <div style={{ flex: 1 }}>
-          <label style={labelStyle}>
-            Scripture
-            <span style={sublabelStyle}>(optional)</span>
-          </label>
+          <label style={labelStyle}>Scripture</label>
           <input
             type="text"
-            placeholder="e.g. Matthew 11:28-30"
+            placeholder="Matthew 11:28-30"
             value={scriptureRef}
             onChange={(e) => setScriptureRef(e.target.value)}
             style={inputStyle}
@@ -209,67 +222,130 @@ export default function SermonInput({ onGenerate, isLoading }) {
         </div>
       </div>
 
-      {/* Sermon transcript textarea */}
-      <div style={sectionStyle}>
-        <label style={labelStyle}>Sermon Transcript</label>
-        <textarea
-          placeholder="Paste your full sermon transcript here..."
-          value={sermonText}
-          onChange={(e) => setSermonText(e.target.value)}
-          rows={12}
-          style={{
-            ...inputStyle,
-            resize: "vertical",
-            lineHeight: 1.6,
-          }}
-        />
-        <p
-          style={{
-            fontSize: "12px",
-            color: "var(--color-text-secondary)",
-            marginTop: "6px",
-          }}
-        >
-          {sermonText.length > 0
-            ? `${sermonText.split(/\s+/).filter(Boolean).length} words`
-            : "Tip: Most sermons are 3,000–5,000 words"}
-        </p>
-      </div>
-
-      {/* Denomination + Tone row */}
-      <div style={{ display: "flex", gap: "16px", ...sectionStyle }}>
-        <div style={{ flex: 1 }}>
-          <label style={labelStyle}>Tradition / Denomination</label>
-          <select
-            value={denomination}
-            onChange={(e) => setDenomination(e.target.value)}
-            style={selectStyle}
-          >
-            {DENOMINATIONS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
+      {/* === TRANSCRIPT MODE === */}
+      {mode === "transcript" && (
+        <div style={{ marginBottom: "24px" }}>
+          <label style={labelStyle}>Sermon Transcript</label>
+          <textarea
+            placeholder="Paste your full sermon transcript here..."
+            value={sermonText}
+            onChange={(e) => setSermonText(e.target.value)}
+            rows={12}
+            style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }}
+          />
+          <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginTop: "6px" }}>
+            {sermonText.length > 0
+              ? `${sermonText.split(/\s+/).filter(Boolean).length} words`
+              : "Tip: Most sermons are 3,000-5,000 words"}
+          </p>
         </div>
-        <div style={{ flex: 1 }}>
-          <label style={labelStyle}>Your Communication Style</label>
-          <select
-            value={tone}
-            onChange={(e) => setTone(e.target.value)}
-            style={selectStyle}
-          >
-            {TONES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label} — {t.desc}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      )}
 
-      {/* Content type checkboxes */}
-      <div style={sectionStyle}>
+      {/* === OUTLINE MODE === */}
+      {mode === "outline" && (
+        <>
+          {/* Main Points */}
+          <div style={{ marginBottom: "24px" }}>
+            <label style={labelStyle}>Main Points</label>
+            {mainPoints.map((point, index) => (
+              <div
+                key={index}
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "start",
+                  marginBottom: "10px",
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    color: "var(--color-accent)",
+                    minWidth: "20px",
+                    paddingTop: "10px",
+                  }}
+                >
+                  {index + 1}.
+                </span>
+                <textarea
+                  placeholder={`Main point ${index + 1} — include any sub-points or key thoughts`}
+                  value={point}
+                  onChange={(e) => updatePoint(index, e.target.value)}
+                  rows={2}
+                  style={{ ...inputStyle, flex: 1, resize: "vertical", lineHeight: 1.6 }}
+                />
+                {mainPoints.length > 1 && (
+                  <button
+                    onClick={() => removePoint(index)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--color-text-secondary)",
+                      cursor: "pointer",
+                      fontSize: "18px",
+                      paddingTop: "8px",
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+            {mainPoints.length < 5 && (
+              <button
+                onClick={addPoint}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: "6px",
+                  border: "1px dashed var(--color-border)",
+                  background: "transparent",
+                  color: "var(--color-text-secondary)",
+                  fontFamily: "var(--font-body)",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                }}
+              >
+                + Add Point
+              </button>
+            )}
+          </div>
+
+          {/* Key Illustration */}
+          <div style={{ marginBottom: "24px" }}>
+            <label style={labelStyle}>
+              Key Illustration or Story
+              <span style={sublabelStyle}>(optional)</span>
+            </label>
+            <textarea
+              placeholder="Describe the main illustration, analogy, or personal story you plan to use..."
+              value={keyIllustration}
+              onChange={(e) => setKeyIllustration(e.target.value)}
+              rows={3}
+              style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }}
+            />
+          </div>
+
+          {/* Application */}
+          <div style={{ marginBottom: "24px" }}>
+            <label style={labelStyle}>
+              Application / Call to Action
+              <span style={sublabelStyle}>(optional)</span>
+            </label>
+            <input
+              type="text"
+              placeholder="What should people do differently this week?"
+              value={applicationPoint}
+              onChange={(e) => setApplicationPoint(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Content type pills */}
+      <div style={{ marginBottom: "28px" }}>
         <label style={labelStyle}>What should we generate?</label>
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
           {CONTENT_TYPES.map((ct) => {
@@ -315,7 +391,6 @@ export default function SermonInput({ onGenerate, isLoading }) {
           fontWeight: 600,
           cursor: isLoading ? "not-allowed" : "pointer",
           transition: "background 0.2s ease",
-          letterSpacing: "0.01em",
         }}
         onMouseEnter={(e) => {
           if (!isLoading) e.target.style.background = "var(--color-accent-hover)";
@@ -324,7 +399,7 @@ export default function SermonInput({ onGenerate, isLoading }) {
           if (!isLoading) e.target.style.background = "var(--color-accent)";
         }}
       >
-        {isLoading ? "Generating your content…" : "Generate Content →"}
+        {isLoading ? "Generating your content..." : "Generate Content →"}
       </button>
     </div>
   );

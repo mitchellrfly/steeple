@@ -1,163 +1,217 @@
 /* app/api/generate/route.js */
 /*
-  This is the API endpoint that your frontend calls.
-  It receives the sermon data and church profile,
-  then calls the Claude API to generate content.
-
-  How it works:
-  1. Frontend sends a POST request with sermon text + preferences
-  2. We build a carefully engineered prompt for each content type
-  3. We call Claude's API for each content type
-  4. We return all generated content as JSON
-
-  The prompt engineering here is WHERE YOUR PRODUCT LIVES.
-  Generic prompts = generic output = no moat.
-  Church-specific, theologically-aware prompts = your differentiator.
+  UPDATED: Now supports two modes:
+  1. Transcript Mode — works like before, but now includes voice profile if available
+  2. Outline Mode — takes main points + voice profile and generates content
+     as if the pastor had preached a full sermon
+  
+  The voice profile (from Supabase) is injected into the system prompt
+  so Claude generates content that matches the pastor's actual voice.
 */
 
 import Anthropic from "@anthropic-ai/sdk";
 
-// Initialize the Anthropic client with your API key
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 /*
-  This is the core system prompt that shapes Claude's behavior
-  for ALL content generation. It establishes theological awareness
-  and content standards. This is your secret sauce.
+  Build the system prompt. If a voice profile exists, it gets included
+  to shape the writing style. This is the key differentiator — 
+  without this, the output is generic. With it, it sounds like the pastor.
 */
-function buildSystemPrompt(denomination, tone) {
-  return `You are a skilled church communications assistant specializing in repurposing sermon content. You deeply understand the theological distinctives and communication culture of different Christian traditions.
+function buildSystemPrompt(denomination, tone, voiceProfile) {
+  let prompt = `You are a skilled church communications assistant specializing in repurposing sermon content. You deeply understand the theological distinctives and communication culture of different Christian traditions.
 
 THEOLOGICAL CONTEXT:
 - This pastor serves in the "${denomination}" tradition.
 - Respect the theological framework of this tradition in all generated content.
 - Use language, illustrations, and theological emphasis consistent with this tradition.
-- NEVER insert theological concepts foreign to this tradition (e.g., don't use Calvinist language for Arminian traditions, don't assume liturgical practices for non-liturgical churches).
-- If scripture is referenced, maintain the interpretive approach typical of this tradition.
+- NEVER insert theological concepts foreign to this tradition.
+- If scripture is referenced, maintain the interpretive approach typical of this tradition.`;
+
+  // If we have a voice profile, inject it — this is the magic
+  if (voiceProfile) {
+    prompt += `
+
+PASTOR'S VOICE PROFILE:
+The following profile was built by analyzing this pastor's actual sermon transcripts. You MUST match this voice precisely. This is not a suggestion — the content should be indistinguishable from what this pastor would write themselves.
+
+${voiceProfile}
+
+CRITICAL: Use the specific phrases, patterns, and stylistic choices described in the voice profile above. Match their sentence structure, vocabulary level, emotional register, and theological framing exactly.`;
+  } else {
+    prompt += `
 
 COMMUNICATION STYLE:
 - The pastor's natural tone is: ${getToneDescription(tone)}.
-- Match this voice consistently. The content should sound like THIS pastor wrote it, not a generic Christian writer.
-- Avoid churchspeak clichés ("do life together", "unpack this", "lean into") unless the pastor's transcript actually uses them.
-- Write for a general church audience — not seminary students, not seekers, but regular members who attend weekly.
+- Match this voice consistently.`;
+  }
+
+  prompt += `
 
 CONTENT STANDARDS:
-- Every scripture reference must be EXACT. If you're uncertain about a verse reference, flag it with [VERIFY] rather than guessing.
-- Do not invent quotes or attribute statements to the pastor that aren't in the transcript.
-- Preserve the pastor's key illustrations, stories, and phrases — these are what make it authentic.
-- Content should be ready to publish with minimal editing.`;
+- Every scripture reference must be EXACT. If uncertain, flag it with [VERIFY].
+- Do not invent quotes or attribute statements to the pastor that aren't provided.
+- Content should be ready to publish with minimal editing.
+- Avoid churchspeak clichés unless the pastor's voice profile uses them.`;
+
+  return prompt;
 }
 
-/*
-  Map tone values to rich descriptions Claude can work with.
-  The more specific you are here, the better Claude matches the voice.
-*/
 function getToneDescription(tone) {
   const descriptions = {
-    conversational:
-      "Warm and approachable. Uses contractions, rhetorical questions, and everyday language. Feels like a trusted friend explaining something over coffee. Occasional humor. Short paragraphs.",
-    academic:
-      "Thoughtful and precise. Values exegetical depth and careful word choice. References original languages sparingly but naturally. Structured arguments. Respects the listener's intelligence without being inaccessible.",
-    passionate:
-      "Bold and direct. Uses urgent language and strong calls to action. Not afraid to challenge. Short punchy sentences mixed with longer flowing ones. High energy. Conviction-driven.",
-    pastoral:
-      "Gentle and empathetic. Leads with compassion. Acknowledges struggle before offering truth. Uses 'we' more than 'you.' Encouraging without being shallow. Creates emotional safety.",
-    storytelling:
-      "Narrative-driven. Weaves illustrations, personal anecdotes, and vivid imagery throughout. Draws the reader into a scene before making a point. Cinematic. Emotionally engaging.",
+    conversational: "Warm and approachable. Uses contractions, rhetorical questions, and everyday language. Feels like a trusted friend explaining something over coffee.",
+    academic: "Thoughtful and precise. Values exegetical depth and careful word choice. References original languages sparingly but naturally.",
+    passionate: "Bold and direct. Uses urgent language and strong calls to action. Short punchy sentences mixed with longer flowing ones.",
+    pastoral: "Gentle and empathetic. Leads with compassion. Acknowledges struggle before offering truth. Uses 'we' more than 'you.'",
+    storytelling: "Narrative-driven. Weaves illustrations, personal anecdotes, and vivid imagery throughout. Draws the reader into a scene before making a point.",
   };
   return descriptions[tone] || descriptions.conversational;
 }
 
 /*
-  Individual prompt builders for each content type.
-  Each one tells Claude exactly what to produce.
+  For outline mode, we need to build a different kind of user prompt.
+  Instead of "here's a transcript, repurpose it," it's
+  "here's what the sermon covers, write as if you preached it."
 */
-function buildBlogPrompt(sermonTitle, scriptureRef) {
-  return `Based on the sermon transcript below, write a blog post (600-900 words).
+function buildOutlineContext(sermonTitle, scriptureRef, mainPoints, keyIllustration, applicationPoint) {
+  let context = `SERMON OUTLINE:\n`;
+  if (sermonTitle) context += `Title: "${sermonTitle}"\n`;
+  if (scriptureRef) context += `Primary Scripture: ${scriptureRef}\n\n`;
+
+  context += `MAIN POINTS:\n`;
+  mainPoints.forEach((point, i) => {
+    context += `${i + 1}. ${point}\n`;
+  });
+
+  if (keyIllustration && keyIllustration.trim()) {
+    context += `\nKEY ILLUSTRATION/STORY:\n${keyIllustration}\n`;
+  }
+
+  if (applicationPoint && applicationPoint.trim()) {
+    context += `\nAPPLICATION/CALL TO ACTION:\n${applicationPoint}\n`;
+  }
+
+  return context;
+}
+
+/*
+  Content-specific prompt builders.
+  These are largely the same as before, but adapted to work with
+  both transcript and outline inputs.
+*/
+function buildBlogPrompt(sermonTitle, scriptureRef, isOutlineMode) {
+  const sourceNote = isOutlineMode
+    ? "Based on the sermon outline below, write a blog post (600-900 words) as if the pastor had preached this sermon and you are now repurposing it."
+    : "Based on the sermon transcript below, write a blog post (600-900 words).";
+
+  return `${sourceNote}
 
 REQUIREMENTS:
 - Title: Create an engaging blog title${sermonTitle ? ` (the sermon was titled "${sermonTitle}")` : ""}.
 ${scriptureRef ? `- Primary scripture: ${scriptureRef}` : ""}
 - Opening: Hook the reader with the sermon's central tension or question. Don't start with "This Sunday..." or "In this week's sermon..."
-- Body: Distill 2-3 key points from the sermon. Don't try to cover everything — go deep on what matters most.
-- Include the pastor's best illustration or story from the transcript.
-- Closing: End with a specific, actionable application — not a vague "think about this."
+- Body: Distill 2-3 key points. Don't try to cover everything — go deep on what matters most.
+- Include illustrations or stories${isOutlineMode ? " based on what's provided in the outline" : " from the transcript"}.
+- Closing: End with a specific, actionable application.
 - Format: Use subheadings to break up sections. Keep paragraphs to 2-3 sentences.
 - DO NOT use the phrase "in conclusion" or "to sum up."`;
 }
 
-function buildSocialPrompt(sermonTitle, scriptureRef) {
-  return `Based on the sermon transcript below, create 5 social media posts.
+function buildSocialPrompt(sermonTitle, scriptureRef, isOutlineMode) {
+  const sourceNote = isOutlineMode
+    ? "Based on the sermon outline below, create 5 social media posts as if repurposing a sermon the pastor preached on these points."
+    : "Based on the sermon transcript below, create 5 social media posts.";
+
+  return `${sourceNote}
 
 REQUIREMENTS:
-- Post 1: A punchy standalone quote or insight from the sermon (1-2 sentences). This should work without ANY context — someone scrolling should stop and think.
-- Post 2: A question that provokes reflection, drawn from the sermon's theme. Format: question + 1 sentence of context.
-- Post 3: A "thread-style" post — the sermon's main point broken into 3-4 short sequential thoughts, each on its own line.
-- Post 4: A personal/vulnerable insight from the sermon that invites engagement. Start with "What if..." or a similar hook.
-- Post 5: A scripture-focused post.${scriptureRef ? ` Use ${scriptureRef}.` : ""} Pair the verse with a one-line reflection from the sermon.
+- Post 1: A punchy standalone insight (1-2 sentences). Should work without ANY context.
+- Post 2: A reflective question drawn from the sermon's theme. Format: question + 1 sentence of context.
+- Post 3: A "thread-style" post — the main point broken into 3-4 short sequential thoughts, each on its own line.
+- Post 4: A personal/vulnerable insight that invites engagement. Start with "What if..." or a similar hook.
+- Post 5: A scripture-focused post.${scriptureRef ? ` Use ${scriptureRef}.` : ""} Pair the verse with a one-line reflection.
 
 FORMAT RULES:
-- Each post should be separated by "---"
-- No hashtags (they reduce reach on most platforms now)
-- No emojis in the first line of any post
+- Separate each post with "---"
+- No hashtags
+- No emojis in the first line
 - Keep each post under 200 words
-- Each post must stand COMPLETELY alone — someone seeing just one post should get value`;
+- Each post must stand completely alone`;
 }
 
-function buildDiscussionPrompt(sermonTitle, scriptureRef) {
-  return `Based on the sermon transcript below, create a small group discussion guide.
+function buildDiscussionPrompt(sermonTitle, scriptureRef, isOutlineMode) {
+  const sourceNote = isOutlineMode
+    ? "Based on the sermon outline below, create a small group discussion guide."
+    : "Based on the sermon transcript below, create a small group discussion guide.";
+
+  return `${sourceNote}
 
 REQUIREMENTS:
 - Title: "${sermonTitle || "Discussion Guide"}"
 ${scriptureRef ? `- Scripture passage: ${scriptureRef}` : ""}
-- Opening icebreaker: One low-stakes question to get people talking (NOT "how was your week"). Make it thematically connected to the sermon.
-- Scripture reading: Identify the key passage (3-8 verses) for the group to read together.
-- Discussion questions: Write 5-6 questions that progress in depth:
+- Opening icebreaker: One low-stakes question connected to the theme.
+- Scripture reading: Identify the key passage (3-8 verses) for the group.
+- Discussion questions: 5-6 questions progressing in depth:
   * Questions 1-2: Observation (what does the text say?)
   * Questions 3-4: Interpretation (what does it mean?)
   * Questions 5-6: Application (what do we do about it?)
-- Leader notes: For each question, add a brief italicized note with guidance for the leader (e.g., "If the group gets stuck, try asking..." or "The key insight here is...").
-- Closing: A specific prayer prompt that ties to the sermon's application.
+- Leader notes: For each question, add brief italicized guidance.
+- Closing: A specific prayer prompt tied to the application.
 
-FORMAT: Use clear numbering and formatting. This should be printable.`;
+FORMAT: Use clear numbering. This should be printable.`;
 }
 
-function buildEmailPrompt(sermonTitle, scriptureRef) {
-  return `Based on the sermon transcript below, write a midweek email devotional (250-400 words).
+function buildEmailPrompt(sermonTitle, scriptureRef, isOutlineMode) {
+  const sourceNote = isOutlineMode
+    ? "Based on the sermon outline below, write a midweek email devotional (250-400 words)."
+    : "Based on the sermon transcript below, write a midweek email devotional (250-400 words).";
+
+  return `${sourceNote}
 
 REQUIREMENTS:
-- Subject line: Compelling, not clickbait. Should feel personal, not promotional.
-${sermonTitle ? `- Reference this Sunday's sermon "${sermonTitle}" briefly but don't summarize it — assume the reader may not have been there.` : ""}
+- Subject line: Compelling, not clickbait. Personal, not promotional.
+${sermonTitle ? `- Reference this Sunday's sermon "${sermonTitle}" briefly.` : ""}
 ${scriptureRef ? `- Ground the devotional in ${scriptureRef}.` : ""}
-- Take ONE idea from the sermon and go deeper on it with a fresh angle.
-- Include a brief personal reflection or illustration (write as if the pastor is sharing).
+- Take ONE idea and go deeper with a fresh angle.
+- Include a brief personal reflection or illustration.
 - End with a single reflective question and a brief prayer (2-3 sentences).
-- Tone: Intimate and warm. This lands in someone's inbox — it should feel like a personal letter, not a newsletter.`;
+- Tone: Intimate and warm. Should feel like a personal letter.`;
 }
 
 /*
-  Main API handler. This runs when the frontend sends a POST request.
+  Main API handler
 */
 export async function POST(request) {
   try {
-    // Parse the incoming data from the frontend
     const body = await request.json();
-    const { sermonText, sermonTitle, scriptureRef, denomination, tone, contentTypes } = body;
+    const {
+      mode,
+      sermonText,
+      sermonTitle,
+      scriptureRef,
+      mainPoints,
+      keyIllustration,
+      applicationPoint,
+      denomination,
+      tone,
+      contentTypes,
+      voiceProfile,
+    } = body;
 
-    // Validate that we have sermon text
-    if (!sermonText || sermonText.trim().length === 0) {
-      return Response.json(
-        { error: "Sermon transcript is required." },
-        { status: 400 }
-      );
+    // Validate based on mode
+    if (mode === "transcript" && (!sermonText || sermonText.trim().length === 0)) {
+      return Response.json({ error: "Sermon transcript is required." }, { status: 400 });
     }
 
-    // Build the system prompt (shared across all content types)
-    const systemPrompt = buildSystemPrompt(denomination, tone);
+    if (mode === "outline" && (!mainPoints || mainPoints.length === 0)) {
+      return Response.json({ error: "At least one main point is required." }, { status: 400 });
+    }
 
-    // Map content types to their prompt builders
+    const isOutlineMode = mode === "outline";
+    const systemPrompt = buildSystemPrompt(denomination, tone, voiceProfile);
+
     const promptBuilders = {
       blog: buildBlogPrompt,
       social: buildSocialPrompt,
@@ -165,56 +219,49 @@ export async function POST(request) {
       email: buildEmailPrompt,
     };
 
-    // Generate content for each selected type
-    // We run them all in parallel (Promise.all) to save time
+    // Build the source content (transcript or outline)
+    let sourceContent;
+    if (isOutlineMode) {
+      sourceContent = buildOutlineContext(
+        sermonTitle,
+        scriptureRef,
+        mainPoints,
+        keyIllustration,
+        applicationPoint
+      );
+    } else {
+      sourceContent = `--- SERMON TRANSCRIPT ---\n${sermonText}\n--- END TRANSCRIPT ---`;
+    }
+
+    // Generate content for each selected type in parallel
     const results = {};
     const promises = contentTypes.map(async (type) => {
       const buildPrompt = promptBuilders[type];
       if (!buildPrompt) return;
 
-      const userPrompt = `${buildPrompt(sermonTitle, scriptureRef)}
+      const contentPrompt = buildPrompt(sermonTitle, scriptureRef, isOutlineMode);
+      const userPrompt = `${contentPrompt}\n\n${sourceContent}`;
 
---- SERMON TRANSCRIPT ---
-${sermonText}
---- END TRANSCRIPT ---`;
-
-      // Call the Claude API
       const message = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 2000,
         system: systemPrompt,
-        messages: [
-          {
-            role: "user",
-            content: userPrompt,
-          },
-        ],
+        messages: [{ role: "user", content: userPrompt }],
       });
 
-      // Extract the text from Claude's response
-      const generatedText = message.content
+      results[type] = message.content
         .filter((block) => block.type === "text")
         .map((block) => block.text)
         .join("\n");
-
-      results[type] = generatedText;
     });
 
-    // Wait for all content types to finish generating
     await Promise.all(promises);
 
-    // Return the generated content
     return Response.json({ content: results });
-
   } catch (error) {
     console.error("Generation error:", error);
-
-    // Return a helpful error message
     return Response.json(
-      {
-        error:
-          error.message || "Something went wrong generating your content. Please try again.",
-      },
+      { error: error.message || "Something went wrong. Please try again." },
       { status: 500 }
     );
   }

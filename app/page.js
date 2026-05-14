@@ -1,56 +1,118 @@
 /* app/page.js */
 /*
-  This is the main (and only) page of your MVP.
-  It manages the app state and coordinates between
-  the input form and the output display.
+  UPDATED: Now includes a "church code" flow.
   
-  The flow:
-  1. Pastor fills out the form (SermonInput)
-  2. Form data gets sent to /api/generate
-  3. Loading state shows while Claude works
-  4. Results appear in ContentOutput
+  When a pastor arrives:
+  1. If they have a saved church code (localStorage), auto-load their profile
+  2. If not, show a "Connect Your Church" screen where they enter their code
+  3. Once connected, show the main content generation form
+  4. The form now passes voice profile data to the API
+  
+  Also includes a link to /setup for new churches.
 */
- 
+
 "use client";
- 
-import { useState } from "react";
+
+import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase";
 import SermonInput from "../components/SermonInput";
 import ContentOutput from "../components/ContentOutput";
- 
+
 export default function Home() {
-  // App state
+  // Church profile state
+  const [churchCode, setChurchCode] = useState("");
+  const [churchProfile, setChurchProfile] = useState(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [codeInput, setCodeInput] = useState("");
+  const [codeError, setCodeError] = useState(null);
+
+  // Content generation state
   const [isLoading, setIsLoading] = useState(false);
-  const [content, setContent] = useState(null);  // null = no results yet
+  const [content, setContent] = useState(null);
   const [error, setError] = useState(null);
- 
-  /*
-    This function runs when the pastor clicks "Generate Content".
-    It sends the form data to our API route and handles the response.
-  */
+
+  // On page load, check if there's a saved church code
+  useEffect(() => {
+    const savedCode = localStorage.getItem("steeple_church_code");
+    if (savedCode) {
+      loadChurchProfile(savedCode);
+    } else {
+      setIsLoadingProfile(false);
+    }
+  }, []);
+
+  // Load a church profile from Supabase by code
+  const loadChurchProfile = async (code) => {
+    setIsLoadingProfile(true);
+    setCodeError(null);
+
+    try {
+      const { data, error: dbError } = await supabase
+        .from("churches")
+        .select("*")
+        .eq("church_code", code.toLowerCase().trim())
+        .single();
+
+      if (dbError || !data) {
+        setCodeError("Church code not found. Check the code and try again.");
+        setIsLoadingProfile(false);
+        localStorage.removeItem("steeple_church_code");
+        return;
+      }
+
+      setChurchProfile(data);
+      setChurchCode(data.church_code);
+      localStorage.setItem("steeple_church_code", data.church_code);
+    } catch (err) {
+      console.error("Error loading profile:", err);
+      setCodeError("Something went wrong loading your profile.");
+    } finally {
+      setIsLoadingProfile(false);
+    }
+  };
+
+  // Handle code submission
+  const handleCodeSubmit = () => {
+    if (!codeInput.trim()) {
+      setCodeError("Please enter your church code.");
+      return;
+    }
+    loadChurchProfile(codeInput);
+  };
+
+  // Disconnect and go back to code entry
+  const handleDisconnect = () => {
+    localStorage.removeItem("steeple_church_code");
+    setChurchProfile(null);
+    setChurchCode("");
+    setContent(null);
+    setCodeInput("");
+  };
+
+  // Handle content generation
   const handleGenerate = async (formData) => {
     setIsLoading(true);
     setError(null);
     setContent(null);
- 
+
     try {
-      // Send the sermon data to our API endpoint
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          voiceProfile: churchProfile?.voice_profile || null,
+        }),
       });
- 
+
       const data = await response.json();
- 
-      // Check if the API returned an error
+
       if (!response.ok) {
-        throw new Error(data.error || "Something went wrong. Please try again.");
+        throw new Error(data.error || "Something went wrong.");
       }
- 
-      // Success! Store the generated content
+
       setContent(data.content);
- 
-      // Smooth scroll down to the results
+
       setTimeout(() => {
         document.getElementById("results")?.scrollIntoView({
           behavior: "smooth",
@@ -64,30 +126,48 @@ export default function Home() {
       setIsLoading(false);
     }
   };
- 
-  return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "var(--color-bg)",
-      }}
-    >
-      {/* Top navigation bar */}
-      <nav
+
+  // --- LOADING STATE ---
+  if (isLoadingProfile) {
+    return (
+      <div
         style={{
-          borderBottom: "1px solid var(--color-border)",
-          background: "var(--color-surface)",
-          padding: "14px 32px",
+          minHeight: "100vh",
+          background: "var(--color-bg)",
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
-          position: "sticky",
-          top: 0,
-          zIndex: 100,
+          justifyContent: "center",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          {/* Logo/brand mark */}
+        <p
+          className="loading-pulse"
+          style={{
+            fontFamily: "var(--font-body)",
+            color: "var(--color-text-secondary)",
+            fontSize: "15px",
+          }}
+        >
+          Loading your profile...
+        </p>
+      </div>
+    );
+  }
+
+  // --- CHURCH CODE ENTRY (not yet connected) ---
+  if (!churchProfile) {
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--color-bg)" }}>
+        {/* Nav */}
+        <nav
+          style={{
+            borderBottom: "1px solid var(--color-border)",
+            background: "var(--color-surface)",
+            padding: "14px 32px",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+          }}
+        >
           <div
             style={{
               width: "32px",
@@ -110,30 +190,222 @@ export default function Home() {
               fontFamily: "var(--font-display)",
               fontSize: "18px",
               fontWeight: 700,
-              color: "var(--color-text)",
-              letterSpacing: "-0.02em",
+            }}
+          >
+            Steeple
+          </span>
+        </nav>
+
+        {/* Code entry form */}
+        <div
+          style={{
+            maxWidth: "440px",
+            margin: "0 auto",
+            padding: "100px 24px",
+            textAlign: "center",
+          }}
+        >
+          <h1
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: "28px",
+              fontWeight: 700,
+              marginBottom: "12px",
+            }}
+          >
+            Connect Your Church
+          </h1>
+          <p
+            style={{
+              fontSize: "15px",
+              color: "var(--color-text-secondary)",
+              lineHeight: 1.6,
+              marginBottom: "32px",
+            }}
+          >
+            Enter your church code to load your voice profile and start
+            generating content.
+          </p>
+
+          <div style={{ marginBottom: "16px" }}>
+            <input
+              type="text"
+              placeholder="your-church-code"
+              value={codeInput}
+              onChange={(e) => {
+                setCodeInput(e.target.value.toLowerCase().replace(/\s/g, "-"));
+                setCodeError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCodeSubmit();
+              }}
+              style={{
+                width: "100%",
+                padding: "14px 18px",
+                borderRadius: "var(--radius)",
+                border: `1px solid ${codeError ? "var(--color-error)" : "var(--color-border)"}`,
+                fontFamily: "var(--font-body)",
+                fontSize: "16px",
+                textAlign: "center",
+                boxSizing: "border-box",
+                letterSpacing: "0.02em",
+              }}
+            />
+          </div>
+
+          {codeError && (
+            <p
+              style={{
+                color: "var(--color-error)",
+                fontSize: "13px",
+                marginBottom: "16px",
+              }}
+            >
+              {codeError}
+            </p>
+          )}
+
+          <button
+            onClick={handleCodeSubmit}
+            style={{
+              width: "100%",
+              padding: "14px",
+              borderRadius: "var(--radius)",
+              border: "none",
+              background: "var(--color-accent)",
+              color: "white",
+              fontFamily: "var(--font-body)",
+              fontSize: "15px",
+              fontWeight: 600,
+              cursor: "pointer",
+              marginBottom: "24px",
+            }}
+          >
+            Connect →
+          </button>
+
+          <div
+            style={{
+              borderTop: "1px solid var(--color-border)",
+              paddingTop: "24px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "14px",
+                color: "var(--color-text-secondary)",
+                marginBottom: "12px",
+              }}
+            >
+              New to Steeple?
+            </p>
+            <a
+              href="/setup"
+              style={{
+                color: "var(--color-accent)",
+                fontFamily: "var(--font-body)",
+                fontSize: "14px",
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              Set up your church →
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAIN APP (connected with profile) ---
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--color-bg)" }}>
+      {/* Nav bar */}
+      <nav
+        style={{
+          borderBottom: "1px solid var(--color-border)",
+          background: "var(--color-surface)",
+          padding: "14px 32px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          position: "sticky",
+          top: 0,
+          zIndex: 100,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div
+            style={{
+              width: "32px",
+              height: "32px",
+              borderRadius: "8px",
+              background: "var(--color-accent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "white",
+              fontSize: "16px",
+              fontWeight: 700,
+              fontFamily: "var(--font-display)",
+            }}
+          >
+            S
+          </div>
+          <span
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: "18px",
+              fontWeight: 700,
             }}
           >
             Steeple
           </span>
         </div>
-        <span
-          style={{
-            fontSize: "12px",
-            color: "var(--color-text-secondary)",
-            fontFamily: "var(--font-body)",
-            background: "var(--color-warm-light)",
-            color: "var(--color-warm)",
-            padding: "4px 12px",
-            borderRadius: "20px",
-            fontWeight: 600,
-          }}
-        >
-          MVP Preview
-        </span>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <span
+            style={{
+              fontSize: "13px",
+              color: "var(--color-text-secondary)",
+              fontFamily: "var(--font-body)",
+            }}
+          >
+            {churchProfile.church_name}
+          </span>
+          {churchProfile.voice_profile && (
+            <span
+              style={{
+                fontSize: "11px",
+                background: "var(--color-accent-light)",
+                color: "var(--color-accent)",
+                padding: "3px 10px",
+                borderRadius: "20px",
+                fontWeight: 600,
+                fontFamily: "var(--font-body)",
+              }}
+            >
+              Voice Trained
+            </span>
+          )}
+          <button
+            onClick={handleDisconnect}
+            style={{
+              fontSize: "12px",
+              color: "var(--color-text-secondary)",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--font-body)",
+              textDecoration: "underline",
+            }}
+          >
+            Disconnect
+          </button>
+        </div>
       </nav>
- 
-      {/* Hero section */}
+
+      {/* Hero */}
       <header
         style={{
           textAlign: "center",
@@ -147,7 +419,6 @@ export default function Home() {
             fontFamily: "var(--font-display)",
             fontSize: "36px",
             fontWeight: 700,
-            color: "var(--color-text)",
             lineHeight: 1.2,
             margin: "0 0 16px",
             letterSpacing: "-0.02em",
@@ -166,23 +437,21 @@ export default function Home() {
             margin: 0,
           }}
         >
-          Paste your sermon transcript and get a blog post, social media posts,
-          and a small group discussion guide — all in your voice and
-          theological tradition.
+          {churchProfile.voice_profile
+            ? "Your voice profile is loaded. Generate content from a transcript or just an outline."
+            : "Paste your sermon transcript and get a blog post, social media posts, and a small group discussion guide."}
         </p>
       </header>
- 
-      {/* Main content area */}
-      <main
-        style={{
-          maxWidth: "780px",
-          margin: "0 auto",
-          padding: "0 24px 80px",
-        }}
-      >
-        {/* The input form */}
-        <SermonInput onGenerate={handleGenerate} isLoading={isLoading} />
- 
+
+      {/* Main content */}
+      <main style={{ maxWidth: "780px", margin: "0 auto", padding: "0 24px 80px" }}>
+        <SermonInput
+          onGenerate={handleGenerate}
+          isLoading={isLoading}
+          hasVoiceProfile={!!churchProfile.voice_profile}
+          churchProfile={churchProfile}
+        />
+
         {/* Loading state */}
         {isLoading && (
           <div
@@ -196,39 +465,24 @@ export default function Home() {
               border: "1px solid var(--color-border)",
             }}
           >
-            <div
-              style={{
-                fontSize: "32px",
-                marginBottom: "16px",
-              }}
-            >
-              ✍️
-            </div>
+            <div style={{ fontSize: "32px", marginBottom: "16px" }}>✍️</div>
             <p
               style={{
                 fontFamily: "var(--font-display)",
                 fontSize: "16px",
                 fontWeight: 600,
-                color: "var(--color-text)",
                 margin: "0 0 8px",
               }}
             >
-              Generating your content…
+              Generating your content...
             </p>
-            <p
-              style={{
-                fontSize: "13px",
-                color: "var(--color-text-secondary)",
-                margin: 0,
-              }}
-            >
-              This takes 15-30 seconds. We&apos;re crafting each piece to match
-              your voice and tradition.
+            <p style={{ fontSize: "13px", color: "var(--color-text-secondary)", margin: 0 }}>
+              This takes 15-30 seconds. Crafting each piece to match your voice.
             </p>
           </div>
         )}
- 
-        {/* Error state */}
+
+        {/* Error */}
         {error && (
           <div
             style={{
@@ -238,26 +492,18 @@ export default function Home() {
               borderRadius: "var(--radius)",
               border: "1px solid #FECACA",
               color: "var(--color-error)",
-              fontFamily: "var(--font-body)",
               fontSize: "14px",
             }}
           >
             <strong>Something went wrong:</strong> {error}
           </div>
         )}
- 
-        {/* Results section */}
+
+        {/* Results */}
         {content && (
           <div id="results" style={{ marginTop: "32px" }}>
             <ContentOutput content={content} />
- 
-            {/* Reset / generate again */}
-            <div
-              style={{
-                textAlign: "center",
-                marginTop: "24px",
-              }}
-            >
+            <div style={{ textAlign: "center", marginTop: "24px" }}>
               <button
                 onClick={() => {
                   setContent(null);
@@ -275,13 +521,13 @@ export default function Home() {
                   cursor: "pointer",
                 }}
               >
-                ← Start Over with New Sermon
+                ← Start Over
               </button>
             </div>
           </div>
         )}
       </main>
- 
+
       {/* Footer */}
       <footer
         style={{
