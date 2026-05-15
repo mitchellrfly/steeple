@@ -1,29 +1,82 @@
 /* components/CopyButton.js */
 /*
-  A small reusable button that copies text to the clipboard.
-  Shows "Copy" by default, then briefly switches to "Copied!" 
-  so the user knows it worked.
+  UPDATED: Now copies rich text (HTML) to clipboard so that
+  when pastors paste into Gmail, Google Docs, Word, etc.,
+  the formatting (bold, italic, headings) is preserved.
+  
+  Falls back to plain text if rich copy isn't supported.
 */
 
-"use client"; // This tells Next.js this component runs in the browser
+"use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
+
+// Simple markdown to HTML converter for clipboard
+function markdownToHtml(markdown) {
+  let html = markdown
+    // Headers
+    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+    // Bold and italic combined
+    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+    // Bold
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    // Italic
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    // Horizontal rules (social media dividers)
+    .replace(/^---$/gm, "<hr>")
+    // Line breaks
+    .replace(/\n\n/g, "</p><p>")
+    .replace(/\n/g, "<br>");
+
+  return "<p>" + html + "</p>";
+}
+
+// Strip markdown for clean plain text fallback
+function stripMarkdown(markdown) {
+  return markdown
+    .replace(/^###\s/gm, "")
+    .replace(/^##\s/gm, "")
+    .replace(/^#\s/gm, "")
+    .replace(/\*\*\*(.+?)\*\*\*/g, "$1")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1");
+}
 
 export default function CopyButton({ text }) {
-  // Track whether we just copied (to show the "Copied!" feedback)
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     try {
-      // This is the browser API for copying to clipboard
-      await navigator.clipboard.writeText(text);
+      // Try to copy as rich text (HTML) for formatted pasting
+      const html = markdownToHtml(text);
+      const plain = stripMarkdown(text);
+
+      if (navigator.clipboard && ClipboardItem) {
+        const clipboardItem = new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([plain], { type: "text/plain" }),
+        });
+        await navigator.clipboard.write([clipboardItem]);
+      } else {
+        // Fallback: copy plain text without markdown symbols
+        await navigator.clipboard.writeText(plain);
+      }
+
       setCopied(true);
-      // Reset back to "Copy" after 2 seconds
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error("Failed to copy:", err);
+      // Last resort fallback
+      try {
+        await navigator.clipboard.writeText(stripMarkdown(text));
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (e) {
+        console.error("Failed to copy:", e);
+      }
     }
-  };
+  }, [text]);
 
   return (
     <button
