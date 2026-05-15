@@ -44,7 +44,8 @@ const markdownStyles = {
 };
 
 /* Custom components for react-markdown to style each element */
-const MarkdownComponents = {
+function getMarkdownComponents(activeTab) {
+  return {
   h1: ({ children }) => (
     <h1 style={{
       fontFamily: "var(--font-display)", fontSize: "22px", fontWeight: 700,
@@ -79,14 +80,16 @@ const MarkdownComponents = {
       margin: "24px 0",
       position: "relative",
     }}>
-      <div style={{
-        position: "absolute", top: "-10px", left: "50%", transform: "translateX(-50%)",
-        background: "var(--color-surface-raised)", padding: "0 12px",
-        fontSize: "11px", color: "var(--color-text-secondary)", fontWeight: 600,
-        letterSpacing: "0.05em", textTransform: "uppercase",
-      }}>
-        Next Post
-      </div>
+      {activeTab === "social" && (
+        <div style={{
+          position: "absolute", top: "-10px", left: "50%", transform: "translateX(-50%)",
+          background: "var(--color-surface-raised)", padding: "0 12px",
+          fontSize: "11px", color: "var(--color-text-secondary)", fontWeight: 600,
+          letterSpacing: "0.05em", textTransform: "uppercase",
+        }}>
+          Next Post
+        </div>
+      )}
     </div>
   ),
   ul: ({ children }) => (
@@ -113,7 +116,8 @@ const MarkdownComponents = {
       fontStyle: "italic",
     }}>{children}</blockquote>
   ),
-};
+  };
+}
 
 export default function ContentOutput({ content, onContentUpdate, churchCode, churchProfile }) {
   const availableTabs = Object.keys(content).filter(
@@ -317,7 +321,7 @@ export default function ContentOutput({ content, onContentUpdate, churchCode, ch
 
         {/* Rendered markdown content */}
         <div style={markdownStyles.container}>
-          <ReactMarkdown components={MarkdownComponents}>
+          <ReactMarkdown components={getMarkdownComponents(activeTab)}>
             {content[activeTab]}
           </ReactMarkdown>
         </div>
